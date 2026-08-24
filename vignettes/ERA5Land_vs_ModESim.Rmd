@@ -37,6 +37,7 @@ library(qmap)
 library(cowplot)
 library(extRemes)
 library(ggpattern)
+library(tidyr)
 
 ```
 
@@ -78,11 +79,13 @@ continent_mapping <- list(
 ```{r}
 
 regional_results_ERA5Land<- readRDS(here("data/regionalResults_ERA5Land_cons.RData")) #1950 - 2024
+incl26_regional_results_ERA5Land<- readRDS(here("data/regionalResults_ERA5Land_cons_25_26.RData")) #1950 - 2024
 ### to exclude potential precipitation problems in ERA5-Land only include years from 1970s onwards
 regional_results_ERA5Land <- lapply(regional_results_ERA5Land, function(x) x[21:75])
 
+ERA5_combined_26 <- mapply(c, regional_results_ERA5Land, incl26_regional_results_ERA5Land, SIMPLIFY = FALSE)
 # save cropped ERA5Land data: 
-saveRDS(regional_results_ERA5Land, file = here::here("data/regional_results_ERA5Land_cons.rds"))
+saveRDS(ERA5_combined_26, file = here::here("data/regional_results_ERA5Land_cons_incl26.rds"))
 
 ```
 
@@ -1277,14 +1280,14 @@ Test - ModESim MED annmax PCWD distribution as context for ERA5Land extremes
 
 ```{r}
 ## select MED region data
-MED_ERA5 <- regional_results_ERA5Land[["MED"]]
+MED_ERA5 <- ERA5_combined_26[["WCE"]] #regional_results_ERA5Land for only until 2024 as in paper
 
 #ModESim data
-MED_MODE <- corrected_full[["MED"]]
+MED_MODE <- corrected_full[["WCE"]]
 
 #attach time dimension
 time_info_mode <- seq(from = as.numeric(1420), to = as.numeric(2009))
-time_info_era <- seq(from = as.numeric(1970), to = as.numeric(2024))
+time_info_era <- seq(from = as.numeric(1970), to = as.numeric(2026))
 
 
 # Convert ModE dataset to long format
@@ -1439,12 +1442,12 @@ Function that does the plotting for all regions:
 # ------------------------------------------------------------------------------
 prepare_region_data <- function(region,
                                 corrected_full,
-                                regional_results_ERA5Land,
+                                ERA5_combined_26,
                                 mode_years = 1420:2009,
-                                era5_years = 1970:2024,
+                                era5_years = 1970:2026,
                                 drop_initial_years = 2) {
   MODE_mat <- corrected_full[[region]]
-  ERA5_vec <- regional_results_ERA5Land[[region]]
+  ERA5_vec <- ERA5_combined_26[[region]]
   
   # Time‐series data
   MODE_long <- MODE_mat %>%
@@ -1468,7 +1471,11 @@ prepare_region_data <- function(region,
   MODE_full <- MODE_long %>% filter(time < 1975)
   MODE_ref  <- MODE_long %>% filter(time >= 1975 & time <= 1999)
   ERA5_ref  <- ERA5_df   %>% filter(time >= 1975 & time <= 1999)
-  ERA5_mod  <- ERA5_df   %>% filter(time >= 2000)
+  ERA5_mod  <- ERA5_df   %>% filter(time >= 2000 & time <= 2025)
+  ERA5_2026  <- ERA5_df   %>% filter(time == 2026)
+  
+  # Extract numeric scalar value for 2026
+  val_2026   <- ERA5_df %>% filter(time == 2026) %>% pull(PCWD)
   
   # FEVD + 5‑yr return level
   fit_rl <- function(x) {
@@ -1490,6 +1497,8 @@ prepare_region_data <- function(region,
     MODE_ref    = MODE_ref,
     ERA5_ref    = ERA5_ref,
     ERA5_mod    = ERA5_mod,
+    ERA5_2026   = ERA5_2026,
+    val_2026   = val_2026, # Store the numeric value here
     rl          = rl
   )
 }
@@ -1502,7 +1511,7 @@ plot_region_PCWD_ts <- function(region_code) {
   
   dat <- prepare_region_data(region_code,
                              corrected_full,
-                             regional_results_ERA5Land)
+                             ERA5_combined_26)
   
   # Compute anomalies + bounds + exceedance runs
   anoms_filtered <- anoms_long %>%
@@ -1551,7 +1560,8 @@ plot_region_PCWD_ts <- function(region_code) {
     )
   
   # y-limits
-  y_limits     <- range(c(dat$MODE_long$PCWD, dat$ERA5_df$PCWD), na.rm=TRUE)
+  y_limits     <- range(c(dat$MODE_long$PCWD, 200), na.rm=TRUE)
+   #y_limits     <- range(c(dat$MODE_long$PCWD, dat$ERA5_df$PCWD), na.rm=TRUE)
   common_breaks <- pretty(y_limits, n=6)
   
   # Compute max of each ensemble for dotted lines
@@ -1560,6 +1570,12 @@ plot_region_PCWD_ts <- function(region_code) {
     summarise(max_PCWD = max(PCWD, na.rm=TRUE), .groups = "drop") %>%
     summarise(max_max = max(max_PCWD, na.rm = TRUE), .groups="drop") %>%
     mutate(label = "Ens_maximum")
+  
+  # Compute max of each ensemble for dotted lines
+  ERA5_2026_max <- dat$ERA5_2026 %>%
+  summarise(max_PCWD = max(PCWD, na.rm=TRUE), .groups = "drop") %>%  
+  summarise(max_max = max(max_PCWD, na.rm = TRUE), .groups="drop") %>%
+    mutate(label = "2026")
   
   # Build ggplot
   p_ts <- ggplot()
@@ -1581,7 +1597,8 @@ plot_region_PCWD_ts <- function(region_code) {
     geom_line(data = dat$MODE_mean, aes(time, PCWD, color = factor("Mean_ModE")), linewidth = 0.8) +
     geom_line(data = rolling_filtered, aes(time, mean_rolling, color="rolling_mean"), linewidth=0.7) +
     geom_line(data = dat$ERA5_df, aes(time, PCWD, color = factor("ERA5")), linewidth = 0.8) +
-    geom_hline(data = ensemble_max, aes(yintercept = max_max, color= factor("Ens_maximum")),linetype="dotted", linewidth=0.5)+
+    geom_hline(data = ensemble_max, aes(yintercept = max_max, color= factor("Ens_maximum")),linetype="dotted", linewidth=0.8)+
+    geom_hline(data = ERA5_2026_max, aes(yintercept = max_max, color= factor("2026")),linetype="dashed", linewidth=0.8)+
     scale_y_continuous(limits=y_limits, breaks=common_breaks) +
     scale_color_manual(name = "Data",
       values = c(
@@ -1589,13 +1606,14 @@ plot_region_PCWD_ts <- function(region_code) {
         "Mean_ModE" = "#255C99",
         "rolling_mean"="black", 
         "ERA5"      = "#B3001B", 
-        "Ens_maximum"= "grey30"
+        "Ens_maximum"= "grey30",
+        "2026" = "#ffb800"
       ),
       labels = c(
-        "EMs - ModE-Sim*", "Mean - ModE-Sim*", "25-yr rolling\nmean - ModE-Sim*", "ERA5-Land", "ModE-Sim* - max PCWD")
+        "EMs - ModE-Sim*", "Mean - ModE-Sim*", "25-yr rolling\nmean - ModE-Sim*", "ERA5-Land", "ModE-Sim* - max PCWD", "ERA5-Land 2026")
       ) +
-      scale_fill_manual(name ="Exceedances", values = c("wetter" = "#136E40", "drier" = "#F4DE70" ),
-      labels = c("wetter", "drier")
+      scale_fill_manual(name ="Exceedances", values = c("drier" = "#F4DE70", "wetter" = "#136E40"),
+      labels = c("drier", "wetter")
     ) +
     labs(x = "Year", y = "PCWD [mm]", color = "Data") +
     theme_classic(base_size = 14) +
@@ -1605,7 +1623,7 @@ plot_region_PCWD_ts <- function(region_code) {
   return(p_ts)
 }
 
-ts_MED <- plot_region_PCWD_ts("MED")
+ts_MED <- plot_region_PCWD_ts("WCE")
 ts_MED
 ```
 
@@ -1615,10 +1633,10 @@ plot_region_PCWD_density <- function(region_code) {
   
   dat <- prepare_region_data(region_code,
                              corrected_full,
-                             regional_results_ERA5Land)
+                             ERA5_combined_26)
   
   # y-limits
-  y_limits     <- range(c(dat$MODE_long$PCWD, dat$ERA5_df$PCWD), na.rm=TRUE)
+  y_limits     <- range(c(dat$MODE_long$PCWD, 200), na.rm=TRUE)
   common_breaks <- pretty(y_limits, n=6)
   
   p_den <- ggplot() +
@@ -1638,7 +1656,7 @@ plot_region_PCWD_density <- function(region_code) {
                  aes(y=PCWD, x=after_stat(density),
                      fill="ERA5_00_24"),
                  alpha=0.6, size=0.6, trim = FALSE) +
-    # 
+
     # geom_hline(aes(yintercept=dat$rl$MODE_full,  color="ModESim_full_lin"),
     #            linetype="dashed", size=0.8) +
     # geom_hline(aes(yintercept=dat$rl$MODE_ref,   color="ModESim_ref_lin"),
@@ -1647,7 +1665,9 @@ plot_region_PCWD_density <- function(region_code) {
     #            linetype="dashed", size=0.8) +
     # geom_hline(aes(yintercept=dat$rl$ERA5_mod,   color="ERA5_00_24_lin"),
     #            linetype="dashed", size=0.8) +
-    
+# Horizontal line for 2026 ERA5 value
+    geom_hline(aes(yintercept = dat$val_2026, color = "ERA5_26_lin"),
+               linetype = "dashed", linewidth = 0.8) +    
     scale_fill_manual(
       name   = "Period",
       breaks = c("ModESim_full", "ModESim_ref", "ERA5_70_99", "ERA5_00_24"),
@@ -1661,25 +1681,27 @@ plot_region_PCWD_density <- function(region_code) {
         "ModE-Sim* (1420-1974)",
         "ModE-Sim* (1975-1999)",
         "ERA5-Land (1975-1999)",
-        "ERA5-Land (2000-2024)"
+        "ERA5-Land (2000-2026)"
       )
     ) +
-    # scale_color_manual(
-    #   name   = "5-year Event",
-    #   breaks = c("ModESim_full_lin", "ModESim_ref_lin", "ERA5_70_99_lin", "ERA5_00_24_lin"),
-    #   values = c(
-    #     ModESim_full_lin  = "#17385E",
-    #     ModESim_ref_lin   = "#628567",
-    #     ERA5_70_99_lin    = "#E8B5CC",
-    #     ERA5_00_24_lin    = "#870014"
-    #   ),
-    #   labels = c(
-    #     "ModE-Sim* (1420-1969)",
-    #     "ModE-Sim* (1970-1999)",
-    #     "ERA5-Land (1970-1999)",
-    #     "ERA5-Land (2000-2024)"
-    #   ))
-    # +
+    scale_color_manual(
+      name   = "Single Year Event",
+      breaks = c("ModESim_full_lin", "ModESim_ref_lin", "ERA5_70_99_lin", "ERA5_00_24_lin", "ERA5_26_lin"),
+      values = c(
+        ModESim_full_lin  = "#17385E",
+        ModESim_ref_lin   = "#628567",
+        ERA5_70_99_lin    = "#E8B5CC",
+        ERA5_00_24_lin    = "#870014",
+        #ERA5_26_lin       = "#f4a259"
+        ERA5_26_lin       = "#ffb800"
+      ),
+      labels = c(
+        "ModE-Sim* (1420-1969)",
+        "ModE-Sim* (1970-1999)",
+        "ERA5-Land (1970-1999)",
+        "ERA5-Land (2000-2024)",
+        "ERA5-Land (2026)"
+      ))+
     labs(x="Density", y=NULL) +
     theme_classic(base_size=14) +
     theme(
@@ -1695,32 +1717,71 @@ plot_region_PCWD_density <- function(region_code) {
   return(p_den)
 }
 
-den_MED <- plot_region_PCWD_density("MED")
+den_MED <- plot_region_PCWD_density("WCE")
 den_MED
 ```
 
 ```{r}
 
-##### save legends
-# ts_MED
-# ggsave(
-#   filename = here::here("figures/Annmax_PCWD_Timeseries_legend_wet.pdf"),
-#   plot     = ts_MED,
-#   device   = cairo_pdf,    # better text rendering
-#   width    = 10,           # in inches
-#   height   = 8,            # in inches
-#   units    = "in",
-#   dpi      = 300,          # for raster elements (if any)
-#   bg       = "white"       # white background
-# )
-# 
-# den_MED
+#### save legends
+ts_MED
 ggsave(
-  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_legend.pdf"),
+  filename = here::here("figures/2026_PCWD_Timeseries_legend_dry.pdf"),
+  plot     = ts_MED,
+  device   = cairo_pdf,    # better text rendering
+  width    = 10,           # in inches
+  height   = 8,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+
+den_MED
+ggsave(
+  filename = here::here("figures/2026_PCWD_Timeseries_Density_legend.pdf"),
   plot     = den_MED,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
   height   = 13,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+```
+```{r}
+plot_MED_ts <- plot_region_PCWD_ts("EEU")
+plot_MED_ts <- plot_MED_ts + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+
+plot_MED_den <- plot_region_PCWD_density("EEU")
+plot_MED_den <- plot_MED_den + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+
+combined2all <- plot_grid(
+  plot_MED_ts,plot_MED_den,
+  nrow        = 1,
+  ncol        = 2,
+  align       = "h",
+  axis        = "tb",
+  labels      = c(
+    "           EEU – Eastern Europe",  "" 
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.02,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(2, 1),
+  expand      = TRUE  
+)
+
+print(combined2all)
+
+ggsave(
+  filename = here::here("figures/2026_PCWD_Timeseries_Density_Fig_EEU.pdf"),
+  plot     = combined2all,
+  device   = cairo_pdf,    # better text rendering
+  width    = 11,           # in inches
+  height   = 5,            # in inches
   units    = "in",
   dpi      = 300,          # for raster elements (if any)
   bg       = "white"       # white background

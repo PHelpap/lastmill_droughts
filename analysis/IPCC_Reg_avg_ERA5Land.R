@@ -12,9 +12,10 @@ library(ncdf4)
 library(rnaturalearth)
 library(sf)
 library(here)
+library(sp)
 
 # 1. Define FILEPATH as a string (Climate4R needs a string path)
-nc_path <- here("data/ERA5Land_cons_PCWD_ANNMAX.nc")
+nc_path <- here("data/new_ERA5_PCWD_ANNMAX.nc")
 
 ## read metadata variables using a temporary connection
 nc_pwcd  <- nc_open(nc_path)
@@ -121,7 +122,7 @@ for (region in regions) {
   regional_results[[region]] <- spatial_avg
 }
 #save calculated list
-saveRDS(regional_results, file=(here("data/regionalResults_ERA5Land_cons.RData"))) #conservatively remapped ERA5Land
+saveRDS(regional_results, file=(here("data/regionalResults_ERA5Land_cons_25_26.RData"))) #conservatively remapped ERA5Land
 
 ## check grid alignment
 # Load relevant libraries
